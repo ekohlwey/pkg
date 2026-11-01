@@ -261,6 +261,15 @@ func TestOptions_ObjectReferences(t *testing.T) {
 	}
 }
 
+func TestWithCredentialNilPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("WithCredential(nil) did not panic")
+		}
+	}()
+	auth.WithCredential(nil)
+}
+
 func TestOptions_GenericProviderIdentity(t *testing.T) {
 	for _, tt := range []struct {
 		name     string

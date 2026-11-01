@@ -17,6 +17,8 @@ limitations under the License.
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
 )
 
@@ -34,6 +36,16 @@ type Credential interface {
 	GetDuration() time.Duration
 }
 
+// IdentityCredential is a credential that can identify itself. The identity is
+// used for cache scoping so that a cached result is only reused for the exact
+// same credential.
+type IdentityCredential interface {
+	Credential
+
+	// Identity returns a stable fingerprint of the exact credential.
+	Identity() string
+}
+
 // JWTCredential is a credential represented by a JWT. It is used as the
 // identity passed to providers that exchange JWTs for service provider
 // credentials, and by providers that use the JWT directly as the access
@@ -48,9 +60,23 @@ type JWTCredential struct {
 	ExpiresAt time.Time
 }
 
-var _ Credential = (*JWTCredential)(nil)
+var _ IdentityCredential = (*JWTCredential)(nil)
 
 // GetDuration implements Credential.
 func (c *JWTCredential) GetDuration() time.Duration {
 	return time.Until(c.ExpiresAt)
+}
+
+// Identity implements IdentityCredential. It returns a fingerprint of the
+// exact credential, including the JWT signature and all claims. Reusing cached
+// results across different credentials would mean the caller's credential is
+// never exchanged with the provider, which is what verifies trust in it. This
+// deliberately trades reuse across credential rotations for safety.
+func (c *JWTCredential) Identity() string {
+	return hashString(c.Token)
+}
+
+func hashString(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }

@@ -68,6 +68,11 @@ type Options struct {
 	CredentialUsername   string
 	CredentialAudiences  []string
 
+	// Credential is a pre-acquired identity credential to exchange for a
+	// provider access credential. When set, it is used instead of acquiring a
+	// credential with the configured credential provider.
+	Credential IdentityCredential
+
 	// Request configuration.
 	Scopes        []string
 	ProxyURL      *url.URL
@@ -265,6 +270,23 @@ func WithIdentity(identity string) Option {
 	return func(o *Options) {
 		o.genericProviderIdentity = identity
 		o.awsRoleSessionName = identity
+		o.performCredentialExchange = true
+	}
+}
+
+// WithCredential sets a pre-acquired identity credential to exchange for a
+// provider access credential and enables credential exchange. It is intended
+// for consumers that already hold an identity credential, e.g. an SVID from
+// the SPIFFE Workload API, and therefore do not need a credential provider.
+//
+// It takes precedence over the configured credential provider. It panics if
+// credential is nil.
+func WithCredential(credential IdentityCredential) Option {
+	if credential == nil {
+		panic("credential must not be nil")
+	}
+	return func(o *Options) {
+		o.Credential = credential
 		o.performCredentialExchange = true
 	}
 }

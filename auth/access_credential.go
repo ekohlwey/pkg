@@ -62,7 +62,7 @@ func NewAccessCredential(ctx context.Context, provider Provider, opts ...Option)
 
 		// Update the function to create an access credential using the service account.
 		newAccessCredential = func() (Credential, error) {
-			identity, err := o.oidcCredential(ctx, audiences)
+			identity, err := o.newIdentityCredential(ctx, audiences)
 			if err != nil {
 				return nil, err
 			}
@@ -100,11 +100,14 @@ func NewAccessCredential(ctx context.Context, provider Provider, opts ...Option)
 	return credential, nil
 }
 
-// oidcCredential returns the OIDC credential used to obtain a provider access
-// credential for the object. Kubernetes issues a ServiceAccount token,
-// SPIFFE fetches a JWT-SVID for the object from the SPIFFE Broker, and Actions OIDC
-// fetches an OIDC ID token from the Github/Forgejo Actions token endpoint.
-func (o *Options) oidcCredential(ctx context.Context, audiences []string) (Credential, error) {
+// newIdentityCredential returns the identity credential used to obtain a provider access
+// credential for the object. Kubernetes issues a ServiceAccount token, SPIFFE fetches
+// a JWT-SVID for the object from the SPIFFE Broker API, and Actions OIDC fetches an OIDC
+// ID token from the Github/Forgejo Actions token endpoint.
+func (o *Options) newIdentityCredential(ctx context.Context, audiences []string) (Credential, error) {
+	if o.Credential != nil {
+		return o.Credential, nil
+	}
 	switch o.credentialProvider() {
 	case cryptov1.CredentialProviderKubernetes:
 		sa := o.ServiceAccountRef()
@@ -223,14 +226,28 @@ func buildAccessCredentialCacheKey(provider Provider, audiences []string, provid
 	}
 
 	if o.performCredentialExchange {
+		// Append the provider identity.
 		parts = append(parts, fmt.Sprintf("providerIdentity=%s", providerIdentity))
-		switch o.credentialProvider() {
-		case cryptov1.CredentialProviderKubernetes:
+
+		// Append the credential identity.
+		switch credProvider := o.credentialProvider(); {
+		case o.Credential != nil:
+			// The credential is a caller-provided input, so its fingerprint is
+			// known before the exchange. The key covers the exact credential,
+			// so a cache hit only reuses credentials obtained by exchanging
+			// that exact credential. A different credential is never allowed
+			// to reuse a cached access credential and is always forced to be
+			// revalidated by the provider in a new exchange.
+			//
+			// For credentials acquired internally this would be circular: the
+			// credential does not exist until after the cache key is built.
+			parts = append(parts, fmt.Sprintf("credentialIdentity=%s", o.Credential.Identity()))
+		case credProvider == cryptov1.CredentialProviderKubernetes:
 			parts = append(parts,
 				fmt.Sprintf("serviceAccountName=%s", serviceAccount.Name),
 				fmt.Sprintf("serviceAccountNamespace=%s", serviceAccount.Namespace),
 			)
-		case cryptov1.CredentialProviderSPIFFE:
+		case credProvider == cryptov1.CredentialProviderSPIFFE:
 			// Even if the object shares its SPIFFE ID with others in pratice,
 			// Flux has to assume it doesn't, so the full object reference must
 			// be included in the cache key for SPIFFE. This means different
@@ -243,7 +260,7 @@ func buildAccessCredentialCacheKey(provider Provider, audiences []string, provid
 				fmt.Sprintf("objectName=%s", o.ObjectReference.Name),
 				fmt.Sprintf("objectUID=%s", o.ObjectReference.UID),
 			)
-		case cryptov1.CredentialProviderActionsOIDC:
+		case credProvider == cryptov1.CredentialProviderActionsOIDC:
 			// Actions OIDC does not allow choosing a credential identity like
 			// Kubernetes TokenRequest API and SPIFFE Broker API, so there's
 			// nothing to add to the cache key for Actions OIDC.
